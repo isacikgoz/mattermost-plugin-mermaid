@@ -6,6 +6,8 @@ import {useSelector} from 'react-redux';
 
 import {getTheme} from 'mattermost-redux/selectors/entities/preferences';
 
+import {openMermaidViewer} from './mermaid_viewer';
+
 import './mermaid.scss';
 
 type Theme = ReturnType<typeof getTheme>;
@@ -45,6 +47,7 @@ type RenderedEntry = {
     source: string;
     container: HTMLElement;
     codeBlock: HTMLElement;
+    svg?: string;
 };
 
 class MermaidManager {
@@ -187,13 +190,37 @@ class MermaidManager {
 
         try {
             const {svg, bindFunctions} = await mermaid.render(renderId, entry.source);
+            entry.svg = svg;
             entry.container.className = 'mermaid-plugin-diagram';
             entry.container.innerHTML = svg;
             bindFunctions?.(entry.container);
+            this.addZoomAffordance(entry);
             entry.codeBlock.style.display = 'none';
         } catch (error) {
             this.renderError(entry, error);
         }
+    }
+
+    private addZoomAffordance(entry: RenderedEntry) {
+        const open = (e: Event) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (entry.svg) {
+                openMermaidViewer(entry.svg);
+            }
+        };
+
+        entry.container.classList.add('mermaid-plugin-diagram--zoomable');
+        entry.container.onclick = open;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mermaid-plugin-diagram__zoom';
+        button.setAttribute('aria-label', 'Zoom diagram');
+        button.title = 'Zoom';
+        button.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+        button.onclick = open;
+        entry.container.appendChild(button);
     }
 
     private renderError(entry: RenderedEntry, error: unknown) {
