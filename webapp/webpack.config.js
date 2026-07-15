@@ -85,8 +85,17 @@ const config = {
     output: {
         devtoolNamespace: PLUGIN_ID,
         path: path.join(__dirname, '/dist'),
-        publicPath: '/',
+
+        // 'auto' lets webpack derive the public path at runtime from the URL of
+        // the loaded bundle. Mattermost serves the bundle from
+        // /static/plugins/<id>/, so async chunks (e.g. the lazily-loaded
+        // mermaid library) resolve correctly relative to it.
+        publicPath: 'auto',
         filename: 'main.js',
+
+        // Content-hashed async chunk names avoid stale cache hits when the
+        // plugin is upgraded, since chunk files are served with a long TTL.
+        chunkFilename: '[name].[contenthash].js',
     },
     mode: (isDev) ? 'eval-source-map' : 'production',
     plugins,
