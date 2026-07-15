@@ -48,7 +48,17 @@ type RenderedEntry = {
     container: HTMLElement;
     codeBlock: HTMLElement;
     svg?: string;
+    zoom: number;
+    baseWidth: number;
 };
+
+const INLINE_ZOOM_STEP = 1.25;
+const INLINE_ZOOM_MIN = 0.1;
+const INLINE_ZOOM_MAX = 4;
+
+const ICON_ZOOM_OUT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+const ICON_ZOOM_IN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+const ICON_EXPAND = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 
 class MermaidManager {
     private rendered = new Map<HTMLElement, RenderedEntry>();
@@ -154,6 +164,8 @@ class MermaidManager {
             source,
             container,
             codeBlock,
+            zoom: 1,
+            baseWidth: 0,
         };
         this.rendered.set(codeEl, entry);
         this.renderEntry(entry);
@@ -192,35 +204,175 @@ class MermaidManager {
             const {svg, bindFunctions} = await mermaid.render(renderId, entry.source);
             entry.svg = svg;
             entry.container.className = 'mermaid-plugin-diagram';
-            entry.container.innerHTML = svg;
-            bindFunctions?.(entry.container);
-            this.addZoomAffordance(entry);
+            entry.container.innerHTML = '';
+
+            const scroll = document.createElement('div');
+            scroll.className = 'mermaid-plugin-diagram__scroll';
+            scroll.innerHTML = svg;
+            entry.container.appendChild(scroll);
+            bindFunctions?.(scroll);
+
+            this.addZoomAffordance(entry, scroll);
             entry.codeBlock.style.display = 'none';
         } catch (error) {
             this.renderError(entry, error);
         }
     }
 
-    private addZoomAffordance(entry: RenderedEntry) {
-        const open = (e: Event) => {
+    private addZoomAffordance(entry: RenderedEntry, scroll: HTMLElement) {
+        const svg = scroll.querySelector('svg');
+        entry.baseWidth = this.getNaturalWidth(svg);
+
+        // Initialize the zoom to the fraction the diagram is actually displayed
+        // at (large diagrams are shrunk to fit the container), so the first
+        // +/- click steps relative to what the user sees instead of jumping to
+        // the natural (100%) size.
+        const displayedWidth = svg ? svg.getBoundingClientRect().width : entry.baseWidth;
+        entry.zoom = entry.baseWidth > 0 ?
+            Math.min(INLINE_ZOOM_MAX, Math.max(INLINE_ZOOM_MIN, displayedWidth / entry.baseWidth)) :
+            1;
+
+        const makeButton = (label: string, icon: string, onClick: (e: Event) => void) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mermaid-plugin-diagram__button';
+            button.setAttribute('aria-label', label);
+            button.title = label;
+            button.innerHTML = icon;
+            button.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClick(e);
+            };
+            return button;
+        };
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'mermaid-plugin-diagram__toolbar';
+        toolbar.append(
+            makeButton('Zoom out', ICON_ZOOM_OUT, () => this.setInlineZoom(entry, entry.zoom / INLINE_ZOOM_STEP)),
+            makeButton('Zoom in', ICON_ZOOM_IN, () => this.setInlineZoom(entry, entry.zoom * INLINE_ZOOM_STEP)),
+            makeButton('Full screen', ICON_EXPAND, () => {
+                if (entry.svg) {
+                    openMermaidViewer(entry.svg);
+                }
+            }),
+        );
+        entry.container.appendChild(toolbar);
+
+        this.enableDragPan(scroll);
+    }
+
+    private enableDragPan(scroll: HTMLElement) {
+        // Distance (px) the pointer must travel before we treat the gesture as a
+        // pan rather than a click. Below this, we let the click bubble so
+        // Mattermost's own post handler (e.g. opening the thread RHS) still works.
+        const DRAG_THRESHOLD = 4;
+
+        let dragging = false;
+        let panned = false;
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let startTop = 0;
+
+        const canPan = () =>
+            scroll.scrollWidth > scroll.clientWidth + 1 || scroll.scrollHeight > scroll.clientHeight + 1;
+
+        const onPointerDown = (e: PointerEvent) => {
+            if (e.button !== 0 || !canPan()) {
+                return;
+            }
+            dragging = true;
+            panned = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = scroll.scrollLeft;
+            startTop = scroll.scrollTop;
+        };
+
+        const onPointerMove = (e: PointerEvent) => {
+            if (!dragging) {
+                return;
+            }
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            if (!panned && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) {
+                return;
+            }
+
+            // Once the gesture is clearly a drag, take it over: capture the
+            // pointer, suppress native selection, and show the grabbing cursor.
+            if (!panned) {
+                panned = true;
+                scroll.setPointerCapture(e.pointerId);
+                scroll.classList.add('is-grabbing');
+            }
             e.preventDefault();
-            e.stopPropagation();
-            if (entry.svg) {
-                openMermaidViewer(entry.svg);
+            scroll.scrollLeft = startLeft - dx;
+            scroll.scrollTop = startTop - dy;
+        };
+
+        const onPointerUp = (e: PointerEvent) => {
+            if (!dragging) {
+                return;
+            }
+            dragging = false;
+            scroll.classList.remove('is-grabbing');
+            scroll.releasePointerCapture?.(e.pointerId);
+        };
+
+        // A drag-pan still fires a trailing click; swallow it so it doesn't reach
+        // the post container and open the thread view. Plain clicks (no pan) pass
+        // through untouched.
+        const onClick = (e: MouseEvent) => {
+            if (panned) {
+                e.preventDefault();
+                e.stopPropagation();
+                panned = false;
             }
         };
 
-        entry.container.classList.add('mermaid-plugin-diagram--zoomable');
-        entry.container.onclick = open;
+        scroll.addEventListener('pointerdown', onPointerDown);
+        scroll.addEventListener('pointermove', onPointerMove);
+        scroll.addEventListener('pointerup', onPointerUp);
+        scroll.addEventListener('pointercancel', onPointerUp);
+        scroll.addEventListener('click', onClick, true);
+    }
 
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'mermaid-plugin-diagram__zoom';
-        button.setAttribute('aria-label', 'Zoom diagram');
-        button.title = 'Zoom';
-        button.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
-        button.onclick = open;
-        entry.container.appendChild(button);
+    private getNaturalWidth(svg: SVGElement | null): number {
+        if (!svg) {
+            return 0;
+        }
+        const viewBox = svg.getAttribute('viewBox');
+        if (viewBox) {
+            const parts = viewBox.split(/[\s,]+/).map(Number);
+            if (parts.length === 4 && parts[2] > 0) {
+                return parts[2];
+            }
+        }
+        return svg.getBoundingClientRect().width;
+    }
+
+    private setInlineZoom(entry: RenderedEntry, zoom: number) {
+        const clamped = Math.min(INLINE_ZOOM_MAX, Math.max(INLINE_ZOOM_MIN, zoom));
+        entry.zoom = clamped;
+
+        const scroll = entry.container.querySelector<HTMLElement>('.mermaid-plugin-diagram__scroll');
+        const svg = scroll?.querySelector('svg');
+        if (!scroll || !svg || !entry.baseWidth) {
+            return;
+        }
+
+        // Drive the width explicitly at every level (100% == the diagram's
+        // natural size). maxWidth must be cleared so Mermaid's own cap doesn't
+        // fight the zoom, and the wrapper is a block container so the SVG can
+        // overflow and scroll instead of being shrunk to fit.
+        svg.style.maxWidth = 'none';
+        svg.style.height = 'auto';
+        svg.style.width = `${entry.baseWidth * clamped}px`;
+        scroll.classList.toggle('mermaid-plugin-diagram__scroll--zoomed', clamped > 1);
     }
 
     private renderError(entry: RenderedEntry, error: unknown) {

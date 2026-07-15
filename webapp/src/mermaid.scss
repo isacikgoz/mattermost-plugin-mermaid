@@ -1,44 +1,69 @@
 .mermaid-plugin-diagram {
     position: relative;
-    display: flex;
-    justify-content: flex-start;
     margin: 4px 0;
     padding: 12px;
-    overflow-x: auto;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     border-radius: 4px;
     background: var(--center-channel-bg);
 
-    svg {
-        max-width: 100%;
-        height: auto;
-    }
-
-    &--zoomable {
-        cursor: zoom-in;
-    }
-
-    &:hover .mermaid-plugin-diagram__zoom {
+    &:hover .mermaid-plugin-diagram__toolbar {
         opacity: 1;
     }
 }
 
-.mermaid-plugin-diagram__zoom {
+.mermaid-plugin-diagram__scroll {
+    overflow-x: auto;
+    text-align: left;
+
+    svg {
+        display: block;
+        max-width: 100%;
+        height: auto;
+    }
+
+    &--zoomed {
+        overflow: auto;
+        max-height: 70vh;
+        cursor: grab;
+    }
+
+    &.is-grabbing {
+        cursor: grabbing;
+        user-select: none;
+
+        svg {
+            pointer-events: none;
+        }
+    }
+}
+
+.mermaid-plugin-diagram__toolbar {
     position: absolute;
     top: 8px;
     right: 8px;
+    z-index: 1;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
+    gap: 2px;
+    padding: 2px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     border-radius: 4px;
     background: var(--center-channel-bg);
-    color: rgba(var(--center-channel-color-rgb), 0.72);
     opacity: 0;
-    transition: opacity 0.15s ease, background 0.15s ease;
+    transition: opacity 0.15s ease;
+}
+
+.mermaid-plugin-diagram__button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    transition: background 0.15s ease, color 0.15s ease;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
